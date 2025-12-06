@@ -1,16 +1,22 @@
 import type { NextRequest } from 'next/server';
 import { db } from '~/server/db';
+import { AIJobType } from 'generated/prisma';
 
 export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams;
-  const type = searchParams.get('type');
+  const typeParam = searchParams.get('type');
+  const type =
+    typeParam &&
+    Object.values(AIJobType).includes(typeParam as AIJobType)
+      ? (typeParam as AIJobType)
+      : undefined;
 
   const stream = new ReadableStream({
     async start(controller) {
       const encoder = new TextEncoder();
       let lastJobsHash = '';
       let attempts = 0;
-      const maxAttempts = 300; // 5 minutes max
+      const maxAttempts = 300;
 
       const sendEvent = (data: unknown) => {
         const message = `data: ${JSON.stringify(data)}\n\n`;
