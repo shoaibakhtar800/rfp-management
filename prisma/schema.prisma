@@ -1,0 +1,270 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+    provider = "prisma-client-js"
+    output   = "../generated/prisma"
+}
+
+datasource db {
+    provider = "postgresql"
+    url      = env("DATABASE_URL")
+    // For Neon PostgreSQL serverless: add ?pgbouncer=true&connection_limit=5 to DATABASE_URL
+}
+
+model RFP {
+    id          String    @id @default(cuid())
+    title       String
+    description String    @db.Text
+    
+    userRequest String    @db.Text
+    
+    budget      Float?
+    currency    String    @default("USD")
+    deliveryDays Int?
+    paymentTerms String?
+    warranty     String?
+    
+    items       Json     
+    requirements Json?    
+    
+    status      RFPStatus @default(DRAFT)
+    dueDate     DateTime?
+
+    evaluationSummary String?   @db.Text
+    recommendation    Json?
+
+    awardedVendorId String?
+    awardedAt       DateTime?
+    awardNotes      String?     @db.Text
+    awardedVendor   Vendor?     @relation("AwardedVendor", fields: [awardedVendorId], references: [id], onDelete: SetNull)
+    
+    createdAt   DateTime  @default(now())
+    updatedAt   DateTime  @updatedAt
+    
+    vendors     RFPVendor[]
+    proposals   Proposal[]
+    emailLogs   EmailLog[]
+    
+    @@index([status])
+    @@index([createdAt])
+    @@index([awardedVendorId])
+
+    @@map("rfps")
+}
+
+enum RFPStatus {
+    DRAFT
+    SENT
+    RECEIVING_PROPOSALS
+    EVALUATING
+    AWARDED
+    CANCELLED
+}
+
+model Vendor {
+    id          String    @id @default(cuid())
+    name        String
+    email       String    @unique
+    phone       String?
+    company     String?
+    address     String?
+    
+    category    String?   
+    rating      Float?    
+    notes       String?   @db.Text
+    
+    createdAt   DateTime  @default(now())
+    updatedAt   DateTime  @updatedAt
+    
+    rfps        RFPVendor[]
+    proposals   Proposal[]
+    emailLogs   EmailLog[]
+    awardedRfps RFP[]     @relation("AwardedVendor")
+    
+    @@index([email])
+    @@index([category])
+
+    @@map("vendors")
+}
+
+model RFPVendor {
+    id          String    @id @default(cuid())
+    rfpId       String
+    vendorId    String
+    
+    // Unique token for vendor to submit proposal via portal
+    submissionToken String?  @unique @default(cuid())
+    
+    sentAt      DateTime?
+    status      VendorRFPStatus @default(PENDING)
+    
+    rfp         RFP       @relation(fields: [rfpId], references: [id], onDelete: Cascade)
+    vendor      Vendor    @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+    
+    createdAt   DateTime  @default(now())
+    updatedAt   DateTime  @updatedAt
+    
+    @@unique([rfpId, vendorId])
+    @@index([rfpId])
+    @@index([vendorId])
+    @@index([submissionToken])
+
+    @@map("rfp_vendors")
+}
+
+enum VendorRFPStatus {
+    PENDING
+    SENT
+    VIEWED
+    RESPONDED
+    DECLINED
+    AWARDED
+    NOT_SELECTED
+}
+
+model Proposal {
+    id          String    @id @default(cuid())
+    rfpId       String
+    vendorId    String
+    
+    emailContent String   @db.Text
+    attachments Json?     
+    
+    totalPrice  Float?
+    currency    String    @default("USD")
+    deliveryDays Int?
+    paymentTerms String?
+    warranty    String?
+    validUntil  DateTime?
+    
+    items       Json?     
+    notes       String?   @db.Text
+    
+    aiSummary   String?   @db.Text
+    aiScore     Float?    
+    aiStrengths Json?     
+    aiWeaknesses Json?    
+    completenessScore Float? 
+    
+    status      ProposalStatus @default(RECEIVED)
+    
+    receivedAt  DateTime  @default(now())
+    createdAt   DateTime  @default(now())
+    updatedAt   DateTime  @updatedAt
+    
+    rfp         RFP       @relation(fields: [rfpId], references: [id], onDelete: Cascade)
+    vendor      Vendor    @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+    
+    @@unique([rfpId, vendorId])
+    @@index([rfpId])
+    @@index([vendorId])
+    @@index([status])
+
+    @@map("proposals")
+}
+
+enum ProposalStatus {
+    RECEIVED
+    PARSED
+    EVALUATED
+    SHORTLISTED
+    ACCEPTED
+    REJECTED
+}
+
+model EmailLog {
+    id          String    @id @default(cuid())
+    rfpId       String?
+    vendorId    String?
+    
+    type        EmailType
+    subject     String
+    body        String    @db.Text
+    from        String
+    to          String
+    
+    messageId   String?   @unique
+    threadId    String?
+    status      EmailStatus @default(PENDING)
+    error       String?   @db.Text
+    
+    sentAt      DateTime?
+    receivedAt  DateTime?
+    createdAt   DateTime  @default(now())
+    
+    rfp         RFP?      @relation(fields: [rfpId], references: [id], onDelete: SetNull)
+    vendor      Vendor?   @relation(fields: [vendorId], references: [id], onDelete: SetNull)
+    
+    @@index([rfpId])
+    @@index([vendorId])
+    @@index([messageId])
+    @@index([type])
+
+    @@map("email_logs")
+}
+
+enum EmailType {
+    RFP_SENT
+    PROPOSAL_RECEIVED
+    FOLLOW_UP
+    AWARD_NOTIFICATION
+    OTHER
+}
+
+enum EmailStatus {
+    PENDING
+    SENT
+    DELIVERED
+    FAILED
+    RECEIVED
+    PROCESSED
+}
+
+model AIJob {
+    id          String      @id @default(cuid())
+    type        AIJobType
+    status      AIJobStatus @default(PENDING)
+    
+    rfpId       String?
+    proposalId  String?
+    
+    inputData   Json?
+    
+    outputData  Json?
+    
+    error       String?     @db.Text
+    retryCount  Int         @default(0)
+    
+    progress    Int         @default(0)  // 0-100
+    stepDescription String?
+    
+    inngestEventId String?  @unique
+    
+    startedAt   DateTime?
+    completedAt DateTime?
+    createdAt   DateTime    @default(now())
+    updatedAt   DateTime    @updatedAt
+    
+    @@index([type])
+    @@index([status])
+    @@index([rfpId])
+    @@index([proposalId])
+    @@index([inngestEventId])
+
+    @@map("ai_jobs")
+}
+
+enum AIJobType {
+    PARSE_RFP
+    PARSE_PROPOSAL
+    SCORE_PROPOSAL
+    COMPARE_PROPOSALS
+}
+
+enum AIJobStatus {
+    PENDING
+    PROCESSING
+    COMPLETED
+    FAILED
+}
